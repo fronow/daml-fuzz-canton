@@ -1,0 +1,71 @@
+module Mutants.B6DoubleAccept where
+
+-- ===========================================================================
+-- BUG ZOO -- mutant B6: "a proposal can be accepted twice" (Tier 3 workflow).
+--
+-- This is the first WORKFLOW (multi-step) bug in the zoo. A transfer proposal
+-- is meant to be a one-shot: the receiver accepts it ONCE and a token is
+-- minted. The ONE defect: the Accept choice is `nonconsuming`, so the proposal
+-- is never used up and the receiver can accept the SAME proposal repeatedly,
+-- minting a fresh token each time -> double-spend / inflation.
+--
+-- Caught two ways at once: it is a workflow violation (a one-shot ran twice)
+-- AND it shows up in `checkState` as conservation broken (100 minted twice
+-- -> 200). We assert on the conservation invariant so the catch is objective.
+-- ===========================================================================
+
+import Daml.Script
+import Properties
+
+initialSupply : Decimal
+initialSupply = 100.0
+
+template TokenB6
+  with
+    issuer : Party
+    owner  : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+template TransferProposalB6
+  with
+    issuer   : Party
+    receiver : Party
+    amount   : Decimal
+  where
+    signatory issuer
+    observer receiver
+
+    -- CORRECT behaviour: Accept is consuming -- once accepted, the proposal is
+    -- gone and cannot be replayed.
+    -- BUG B6: `nonconsuming` lets the receiver accept the same proposal over
+    -- and over, minting a new token each time.
+    nonconsuming choice AcceptB6 : ContractId TokenB6
+      controller receiver
+      do create TokenB6 with issuer, owner = receiver, amount
+
+fuzzB6 : Script ()
+fuzzB6 = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+
+  prop <- submit issuer do
+    createCmd TransferProposalB6 with issuer, receiver = alice, amount = initialSupply
+
+  -- The attack: accept the one-shot proposal twice. On a correct (consuming)
+  -- contract the second submit would be rejected; here both succeed.
+  _ <- submit alice do exerciseCmd prop AcceptB6
+  _ <- submit alice do exerciseCmd prop AcceptB6
+
+  toks <- query @TokenB6 issuer
+  let amounts = map (\(_, t) -> t.amount) toks
+  case checkState initialSupply amounts of
+    Some why -> debug ("BUG B6 CAUGHT (as expected):\n" <> why
+                        <> "\nRecipe to reproduce:\n"
+                        <> "step 1: Accept the transfer proposal\n"
+                        <> "step 2: Accept the SAME proposal again (it was never consumed)")
+    None     -> assertMsg
+                  "FUZZER MISSED bug B6 (proposal accepted twice) -- this is a real failure"
+                  False

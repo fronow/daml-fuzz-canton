@@ -1,0 +1,61 @@
+module Mutants.B8PrivacyLeak where
+
+-- ===========================================================================
+-- BUG ZOO -- mutant B8: "privacy leak" (disclosure to a party who shouldn't see).
+--
+-- This is the Tier-4, Canton-unique bug class -- the one that makes daml-fuzz
+-- impossible to copy from the EVM world. On a public chain everyone sees
+-- everything, so "Eve can see this" is not a bug. On Canton, privacy is the
+-- whole point, so an accidental observer is a real and dangerous defect.
+--
+-- The bug: the token is created with an extra `watcher` party listed as an
+-- observer. Observers can SEE the contract. Here the watcher is Eve, who has
+-- no business seeing Alice's holdings.
+--
+-- How we catch it: `query` in Daml Script is party-scoped. We query the ledger
+-- AS EVE and discover she can see a token she is not a stakeholder of.
+-- ===========================================================================
+
+import Daml.Script
+
+initialSupply : Decimal
+initialSupply = 100.0
+
+template TokenB8
+  with
+    issuer  : Party
+    owner   : Party
+    amount  : Decimal
+    watcher : Party
+  where
+    signatory issuer
+    -- BUG B8: `watcher` is added as an observer, leaking the contract to them.
+    -- The correct contract observes only the owner.
+    observer owner, watcher
+
+    choice TransferB8 : ContractId TokenB8
+      with newOwner : Party
+      controller owner
+      do create this with owner = newOwner
+
+fuzzB8 : Script ()
+fuzzB8 = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+  eve    <- allocateParty "Eve"
+
+  -- Alice's token is created with Eve mistakenly set as a watcher/observer.
+  _ <- submit issuer do
+    createCmd TokenB8 with issuer, owner = alice, amount = initialSupply, watcher = eve
+
+  -- The privacy fuzzer looks at the ledger through Eve's eyes.
+  eveView <- query @TokenB8 eve
+  if not (null eveView)
+    then debug ("BUG B8 CAUGHT (as expected): Eve can observe "
+                 <> show (length eveView)
+                 <> " token(s) she is not a party to."
+                 <> "\nRecipe to reproduce:\n"
+                 <> "step 1: create a token whose observers include Eve (`observer owner, watcher` with watcher = Eve)")
+    else assertMsg
+           "FUZZER MISSED bug B8 (privacy leak) -- this is a real failure"
+           False

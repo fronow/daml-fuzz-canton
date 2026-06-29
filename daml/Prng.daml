@@ -1,0 +1,29 @@
+module Prng where
+
+import DA.List ((!!))   -- the list-indexing operator `xs !! i` lives in DA.List
+
+-- ---------------------------------------------------------------------------
+-- A tiny, dependency-free pseudo-random number generator (PRNG).
+--
+-- "Pseudo-random" means: it LOOKS random, but it is 100% deterministic.
+-- Given the same starting number (the "seed"), it always produces the exact
+-- same sequence. That is EXACTLY what we want in a fuzzer: when it finds a
+-- bug, anyone can re-run with the same seed and reproduce the bug precisely.
+--
+-- The algorithm is a "Linear Congruential Generator" (LCG) -- the same simple
+-- formula used inside many standard libraries. The three magic constants are
+-- the classic ANSI C values. The `% 2147483648` (which is 2^31) keeps the
+-- number from growing forever and overflowing.
+-- ---------------------------------------------------------------------------
+
+-- Given the current seed, produce the next seed in the sequence.
+next : Int -> Int
+next s = (s * 1103515245 + 12345) % 2147483648
+
+-- Use a seed to pick one element out of a list.
+--
+-- `s % length xs` turns the (large) seed into a valid list position
+-- (0 .. length-1). NOTE: this assumes the list is NOT empty -- every caller
+-- in this project checks for an empty list before calling `pick`.
+pick : Int -> [a] -> a
+pick s xs = xs !! (s % length xs)

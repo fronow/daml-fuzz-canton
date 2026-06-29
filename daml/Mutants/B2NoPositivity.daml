@@ -1,0 +1,67 @@
+module Mutants.B2NoPositivity where
+
+-- ===========================================================================
+-- BUG ZOO -- mutant B2: "missing positivity check" (non-negativity broken).
+--
+-- A COPY of the correct token with exactly ONE thing changed: the Split choice
+-- no longer rejects a negative splitAmount. An attacker can split a token by
+-- -50, which mints a negative balance (and, as a side effect, inflates the
+-- other piece). A correct contract would reject this outright.
+--
+-- This bug surfaces only when someone submits an INVALID input, so here we
+-- show it directly: we attempt the malicious split and confirm the contract
+-- wrongly accepted it, leaving a negative balance behind. (The funded fuzzer
+-- generates such boundary inputs automatically; this PoC demonstrates the
+-- catch deterministically so it is easy to read and 100% reproducible.)
+-- ===========================================================================
+
+import Daml.Script
+import Properties
+
+initialSupply : Decimal
+initialSupply = 100.0
+
+template TokenB2
+  with
+    issuer : Party
+    owner  : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+    choice TransferB2 : ContractId TokenB2
+      with newOwner : Party
+      controller owner
+      do create this with owner = newOwner
+
+    choice SplitB2 : (ContractId TokenB2, ContractId TokenB2)
+      with splitAmount : Decimal
+      controller owner
+      do
+        -- BUG B2: the "splitAmount must be positive" guard has been deleted.
+        assertMsg "splitAmount must be smaller than amount" (splitAmount < amount)
+        first  <- create this with amount = splitAmount
+        second <- create this with amount = amount - splitAmount
+        pure (first, second)
+
+fuzzB2 : Script ()
+fuzzB2 = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+
+  cid <- submit issuer do
+    createCmd TokenB2 with issuer, owner = alice, amount = initialSupply
+
+  -- The malicious move: split by a NEGATIVE amount. A correct contract rejects
+  -- this; the buggy one accepts it.
+  _ <- submit alice do exerciseCmd cid SplitB2 with splitAmount = -50.0
+
+  toks <- query @TokenB2 issuer
+  let amounts = map (\(_, t) -> t.amount) toks
+  case checkState initialSupply amounts of
+    Some why -> debug ("BUG B2 CAUGHT (as expected):\n" <> why
+                        <> "\nRecipe to reproduce:\nstep 1: Split 100.0 by -50.0")
+    None     -> assertMsg
+                  "FUZZER MISSED bug B2 (negative balance) -- this is a real failure"
+                  False

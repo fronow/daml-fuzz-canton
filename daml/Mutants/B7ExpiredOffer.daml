@@ -1,0 +1,75 @@
+module Mutants.B7ExpiredOffer where
+
+-- ===========================================================================
+-- BUG ZOO -- mutant B7: "an expired offer still executes" (Tier 3 workflow).
+--
+-- The second workflow bug. An offer carries an `expiry` time and is only
+-- supposed to be acceptable before it lapses. The ONE defect: the Accept
+-- choice never checks the clock, so an offer whose expiry is already in the
+-- past can still be accepted.
+--
+-- How we catch it: create an offer that expired yesterday and accept it now.
+-- On a correct contract the Accept would assert `now <= expiry` and the submit
+-- would be rejected; on this mutant it succeeds and mints the token, so the
+-- stale-offer hole is caught.
+-- ===========================================================================
+
+import Daml.Script
+import DA.Time (addRelTime, days)
+
+initialSupply : Decimal
+initialSupply = 100.0
+
+template TokenB7
+  with
+    issuer : Party
+    owner  : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+template OfferB7
+  with
+    issuer   : Party
+    receiver : Party
+    amount   : Decimal
+    expiry   : Time
+  where
+    signatory issuer
+    observer receiver
+
+    -- CORRECT behaviour: reject acceptance after expiry, e.g.
+    --   now <- getTime
+    --   assertMsg "offer has expired" (now <= expiry)
+    -- BUG B7: the expiry check is missing, so a lapsed offer still executes.
+    choice AcceptB7 : ContractId TokenB7
+      controller receiver
+      do
+        -- BUG B7: missing `now <- getTime; assertMsg "expired" (now <= expiry)`
+        create TokenB7 with issuer, owner = receiver, amount
+
+fuzzB7 : Script ()
+fuzzB7 = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+
+  now <- getTime
+  let past = addRelTime now (days (-1))   -- expired yesterday
+
+  offer <- submit issuer do
+    createCmd OfferB7 with issuer, receiver = alice, amount = initialSupply, expiry = past
+
+  -- The attack: accept an offer that already expired. On a correct contract
+  -- this submit would fail.
+  _ <- submit alice do exerciseCmd offer AcceptB7
+
+  toks <- query @TokenB7 issuer
+  if not (null toks)
+    then debug ("BUG B7 CAUGHT (as expected): an expired offer still executed.\n"
+                 <> "Recipe to reproduce:\n"
+                 <> "step 1: create an offer with expiry = yesterday\n"
+                 <> "step 2: Accept it now (no expiry check) -- a token is minted anyway")
+    else assertMsg
+           "FUZZER MISSED bug B7 (expired offer executes) -- this is a real failure"
+           False

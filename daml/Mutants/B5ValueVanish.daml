@@ -1,0 +1,58 @@
+module Mutants.B5ValueVanish where
+
+-- ===========================================================================
+-- BUG ZOO -- mutant B5: "value vanishes" (conservation of value broken, the
+-- OTHER direction from B1/B4).
+--
+-- A COPY of the correct token with a Withdraw choice that is meant to move the
+-- token's value into the issuer's treasury (recreate a token owned by the
+-- issuer). The ONE defect: it archives the token and creates NOTHING, so the
+-- value silently disappears from the ledger. Inflation tests alone would miss
+-- this -- you also need to catch value LOSS. Same `checkState` invariant.
+-- ===========================================================================
+
+import Daml.Script
+import Properties
+
+initialSupply : Decimal
+initialSupply = 100.0
+
+template TokenB5
+  with
+    issuer : Party
+    owner  : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+    -- Withdraw is meant to return the value to the issuer (mint a replacement
+    -- token owned by the issuer). CORRECT behaviour would
+    --   `create this with owner = issuer`.
+    -- BUG B5: the choice just consumes the token and creates nothing, so the
+    -- value vanishes -> conservation broken.
+    choice WithdrawB5 : ()
+      controller owner
+      do
+        pure ()                      -- BUG B5: no replacement token created
+
+fuzzB5 : Script ()
+fuzzB5 = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+
+  cid <- submit issuer do createCmd TokenB5 with issuer, owner = alice, amount = initialSupply
+
+  -- The attack: Alice withdraws. The value should reappear under the issuer;
+  -- on this mutant it simply disappears.
+  _ <- submit alice do exerciseCmd cid WithdrawB5
+
+  toks <- query @TokenB5 issuer
+  let amounts = map (\(_, t) -> t.amount) toks
+  case checkState initialSupply amounts of
+    Some why -> debug ("BUG B5 CAUGHT (as expected):\n" <> why
+                        <> "\nRecipe to reproduce:\n"
+                        <> "step 1: Withdraw the 100.0 token (archived with no replacement)")
+    None     -> assertMsg
+                  "FUZZER MISSED bug B5 (value vanishes) -- this is a real failure"
+                  False

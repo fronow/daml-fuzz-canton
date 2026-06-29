@@ -1,0 +1,23 @@
+# daml-fuzz proof-of-concept project configuration.
+#
+# Pinned to Daml 3.4.11 -- the Canton Network line. The PoC was verified to
+# compile and pass identically on both 2.10.4 and 3.4.11 (zero code changes),
+# so we target the ecosystem-aligned 3.x line.
+#
+# NOTE on tooling: the classic `daml` assistant is deprecated and will be
+# removed in Daml 3.5, replaced by `dpm` (the Digital Asset Package Manager).
+# The assistant still works for 3.4.x; migrating the PoC to dpm is a planned,
+# code-free toolchain step (see STATUS.md / docs/02).
+sdk-version: 3.4.11
+
+name: daml-fuzz-poc
+version: 0.1.0
+
+# All Daml source lives in the `daml/` folder (this file's siblings: daml/Token.daml,
+# daml/Fuzz.daml, daml/Mutants/*.daml, etc.).
+source: daml
+
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script

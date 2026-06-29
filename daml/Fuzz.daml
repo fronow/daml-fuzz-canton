@@ -1,0 +1,169 @@
+module Fuzz where
+
+-- ===========================================================================
+-- daml-fuzz -- proof-of-concept fuzzer (pure Daml Script).
+--
+-- WHAT THIS FILE DOES
+--   It runs the fuzzer against the CORRECT token (daml/Token.daml) and proves
+--   two things a credible security tool must prove:
+--
+--     fuzzStateClean : Tier 1 -- fire hundreds of random, VALID transactions
+--                      at a correct contract and confirm the state invariants
+--                      (conservation of value, non-negativity) are NEVER
+--                      broken. This is the "no false positives" test.
+--
+--     fuzzAuthClean  : Tier 2 -- act as an adversary ("Eve") who owns nothing,
+--                      and confirm the contract REJECTS every move she tries.
+--                      Also confirm the contract rejects nonsensical splits.
+--
+-- HOW TO RUN
+--   daml test
+--   `daml test` automatically runs every top-level `Script` in the project,
+--   so both functions below run, plus the bug-zoo scripts in daml/Mutants/.
+-- ===========================================================================
+
+import Daml.Script
+import Prng
+import Properties
+import Token
+
+-- The total value we mint at the start. Every state check compares against it.
+initialSupply : Decimal
+initialSupply = 100.0
+
+-- How many random actions to fire. More rounds = more thorough = slower.
+rounds : Int
+rounds = 500
+
+-- The fuzzer's running state: the current PRNG seed, and the "history" of
+-- actions taken so far (so we can print a reproduction recipe on failure).
+data St = St with
+  seed    : Int
+  history : [Text]
+
+-- ---------------------------------------------------------------------------
+-- TIER 1 -- random state fuzzing against the CORRECT contract.
+-- ---------------------------------------------------------------------------
+
+fuzzStateClean : Script ()
+fuzzStateClean = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+  bob    <- allocateParty "Bob"
+  let actors = [alice, bob]
+
+  -- Mint the one and only token: total supply = 100.0, owned by Alice.
+  _ <- submit issuer do
+    createCmd Token with issuer, owner = alice, amount = initialSupply
+
+  result <- stateLoop issuer actors rounds (St with seed = 42, history = [])
+  case result of
+    None ->
+      debug ("CLEAN: " <> show rounds
+              <> " rounds completed on the correct contract with no violation (expected).")
+    Some why ->
+      -- If we reach here the fuzzer flagged a correct contract -- a false
+      -- positive -- which is itself a failure we want `daml test` to show red.
+      assertMsg ("FALSE POSITIVE on a correct contract:\n" <> why) False
+
+-- The core loop. Each round it (1) checks the state invariants, then (2) fires
+-- ONE random but VALID action. It returns the first violation found, or None.
+stateLoop : Party -> [Party] -> Int -> St -> Script (Optional Text)
+stateLoop _ _ 0 _ = pure None
+stateLoop issuer actors n st = do
+  toks <- query @Token issuer
+  let amounts = map (\(_, t) -> t.amount) toks
+      recipe  = mconcat (map (<> "\n") (reverse st.history))
+
+  case checkState initialSupply amounts of
+    Some why -> pure (Some (why <> "\nRecipe to reproduce:\n" <> recipe))
+    None -> case toks of
+      [] -> pure None     -- nothing left to act on
+      _  -> do
+        let s1 = next st.seed
+            s2 = next s1
+            s3 = next s2
+            (cid, tok) = pick s1 toks
+            label = "step " <> show (rounds - n + 1) <> ": "
+
+        entry <- if s2 % 2 == 0
+          then do
+            -- A transfer is always valid: the owner authorises moving their own token.
+            let dest = pick s3 actors
+            _ <- submit tok.owner do exerciseCmd cid Transfer with newOwner = dest
+            pure (label <> "Transfer " <> show tok.amount <> " to " <> show dest)
+          else do
+            -- A split is valid as long as 0 < splitAmount < amount.
+            -- We pick a fraction strictly between 0 and 1 so the action always
+            -- passes the correct contract's guards (no rejected submissions).
+            let frac = pick s3 [0.1, 0.3, 0.5, 0.7, 0.9]
+                amt  = tok.amount * frac
+            _ <- submit tok.owner do exerciseCmd cid Split with splitAmount = amt
+            pure (label <> "Split " <> show tok.amount <> " by " <> show amt)
+
+        stateLoop issuer actors (n - 1) (st with seed = s3, history = entry :: st.history)
+
+-- ---------------------------------------------------------------------------
+-- TIER 2 -- adversary / authorization fuzzing against the CORRECT contract.
+--
+-- "Eve" is allocated but never given ownership of anything. A correct contract
+-- must reject every action she attempts. `submitMustFail` is the assertion:
+-- the test PASSES only if the submission FAILS, as it should.
+-- ---------------------------------------------------------------------------
+
+fuzzAuthClean : Script ()
+fuzzAuthClean = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+  eve    <- allocateParty "Eve"
+
+  cid <- submit issuer do
+    createCmd Token with issuer, owner = alice, amount = initialSupply
+
+  -- Eve owns nothing, so she must NOT be able to transfer Alice's token.
+  submitMustFail eve do exerciseCmd cid Transfer with newOwner = eve
+
+  -- A correct contract also rejects nonsensical splits.
+  submitMustFail alice do exerciseCmd cid Split with splitAmount = -50.0
+  submitMustFail alice do exerciseCmd cid Split with splitAmount = initialSupply + 1.0
+
+  debug "AUTH OK: adversary blocked and invalid splits rejected (expected)."
+
+-- ---------------------------------------------------------------------------
+-- TIER 4 -- privacy / disclosure fuzzing against the CORRECT contract.
+--
+-- This is daml-fuzz's signature property and the part NO EVM fuzzer can express:
+-- it only matters on a privacy chain like Canton. The rule is:
+--
+--   "A party may only observe contracts they are a stakeholder of."
+--
+-- We exploit the fact that `query` in Daml Script is PARTY-SCOPED: it returns
+-- only the contracts that party is allowed to see. So we do some legitimate
+-- activity, then look at the ledger THROUGH EVE'S EYES. A privacy-correct
+-- contract must leave her view completely empty -- she is party to nothing.
+--
+-- The matching planted bug is daml/Mutants/B8PrivacyLeak.daml, where the token
+-- accidentally lists an extra observer and Eve can suddenly see it.
+-- ---------------------------------------------------------------------------
+
+fuzzPrivacyClean : Script ()
+fuzzPrivacyClean = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+  bob    <- allocateParty "Bob"
+  eve    <- allocateParty "Eve"
+
+  cid <- submit issuer do
+    createCmd Token with issuer, owner = alice, amount = initialSupply
+
+  -- Some legitimate activity between Alice and Bob. Eve is involved in none of it.
+  _ <- submit alice do exerciseCmd cid Transfer with newOwner = bob
+
+  -- Look at the ledger as Eve. She should be able to see NOTHING.
+  eveView <- query @Token eve
+  if null eveView
+    then debug "PRIVACY OK: Eve cannot observe any token (expected)."
+    else assertMsg
+           ("PRIVACY LEAK: Eve can observe " <> show (length eveView)
+             <> " token(s) she is not a party to")
+           False

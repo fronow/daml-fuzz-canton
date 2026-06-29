@@ -1,0 +1,34 @@
+module Properties where
+
+-- ---------------------------------------------------------------------------
+-- The "invariants" (rules the contract must NEVER break).
+--
+-- A property-based fuzzer is only as good as the properties you give it.
+-- This module holds the actual rules. Keeping them here (separate from the
+-- fuzzing loop and separate from any particular contract) means every
+-- scenario -- the correct token AND every planted-bug "mutant" -- checks the
+-- SAME rules. That is what makes the bug-zoo scorecard fair.
+--
+-- Design choice: a check returns `Optional Text`.
+--   * `None`        = "all good, no rule was broken"
+--   * `Some reason` = "a rule was broken; here is a human-readable reason"
+-- We deliberately do NOT crash here. The fuzzing loop decides what to do with
+-- a violation (record it, attach a reproduction recipe, etc.).
+-- ---------------------------------------------------------------------------
+
+-- Tier 1 -- STATE invariants.
+--
+-- Given the total amount that SHOULD exist (the original supply) and the list
+-- of every live token amount, confirm two things:
+--   P1  Conservation of value : the amounts still add up to the original supply
+--                               (no value created from thin air, none vanished)
+--   P2  Non-negativity        : no token holds a negative amount
+checkState : Decimal -> [Decimal] -> Optional Text
+checkState expectedTotal amounts =
+  let total = sum amounts
+  in if total /= expectedTotal
+       then Some ("CONSERVATION OF VALUE violated: expected the amounts to total "
+                   <> show expectedTotal <> " but they total " <> show total)
+     else if any (< 0.0) amounts
+       then Some "NON-NEGATIVITY violated: at least one token holds a negative amount"
+     else None

@@ -1,0 +1,101 @@
+module Mutants.B1Inflation where
+
+-- ===========================================================================
+-- BUG ZOO -- mutant B1: "inflation" (conservation of value broken).
+--
+-- This is a COPY of the correct token with exactly ONE thing changed: the
+-- Split choice forgets to subtract the split amount from the second piece.
+-- Splitting a 100 token by 30 therefore produces 30 + 100 = 130: value is
+-- created out of thin air.
+--
+-- We run the SAME random fuzzing loop as Fuzz.daml against it. The test PASSES
+-- when the fuzzer CATCHES the bug (that is the whole point), and fails loudly
+-- if the fuzzer ever misses it.
+--
+-- Rule of the bug zoo: one mutant = exactly one planted bug. That is what
+-- makes the scorecard ("X / N bugs caught") a fair, scientific measure.
+-- ===========================================================================
+
+import Daml.Script
+import Prng
+import Properties
+
+initialSupply : Decimal
+initialSupply = 100.0
+
+rounds : Int
+rounds = 200
+
+data St = St with
+  seed    : Int
+  history : [Text]
+
+template TokenB1
+  with
+    issuer : Party
+    owner  : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+    choice TransferB1 : ContractId TokenB1
+      with newOwner : Party
+      controller owner
+      do create this with owner = newOwner
+
+    choice SplitB1 : (ContractId TokenB1, ContractId TokenB1)
+      with splitAmount : Decimal
+      controller owner
+      do
+        assertMsg "splitAmount must be positive"            (splitAmount > 0.0)
+        assertMsg "splitAmount must be smaller than amount" (splitAmount < amount)
+        first  <- create this with amount = splitAmount
+        second <- create this with amount = amount   -- BUG B1: should be `amount - splitAmount`
+        pure (first, second)
+
+fuzzB1 : Script ()
+fuzzB1 = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+  bob    <- allocateParty "Bob"
+  _ <- submit issuer do
+    createCmd TokenB1 with issuer, owner = alice, amount = initialSupply
+
+  result <- loopB1 issuer [alice, bob] rounds (St with seed = 42, history = [])
+  case result of
+    Some why -> debug ("BUG B1 CAUGHT (as expected):\n" <> why)
+    None     -> assertMsg
+                  "FUZZER MISSED bug B1 (inflation) after all rounds -- this is a real failure"
+                  False
+
+loopB1 : Party -> [Party] -> Int -> St -> Script (Optional Text)
+loopB1 _ _ 0 _ = pure None
+loopB1 issuer actors n st = do
+  toks <- query @TokenB1 issuer
+  let amounts = map (\(_, t) -> t.amount) toks
+      recipe  = mconcat (map (<> "\n") (reverse st.history))
+
+  case checkState initialSupply amounts of
+    Some why -> pure (Some (why <> "\nRecipe to reproduce:\n" <> recipe))
+    None -> case toks of
+      [] -> pure None
+      _  -> do
+        let s1 = next st.seed
+            s2 = next s1
+            s3 = next s2
+            (cid, tok) = pick s1 toks
+            label = "step " <> show (rounds - n + 1) <> ": "
+
+        entry <- if s2 % 2 == 0
+          then do
+            let dest = pick s3 actors
+            _ <- submit tok.owner do exerciseCmd cid TransferB1 with newOwner = dest
+            pure (label <> "Transfer " <> show tok.amount <> " to " <> show dest)
+          else do
+            let frac = pick s3 [0.1, 0.3, 0.5, 0.7, 0.9]
+                amt  = tok.amount * frac
+            _ <- submit tok.owner do exerciseCmd cid SplitB1 with splitAmount = amt
+            pure (label <> "Split " <> show tok.amount <> " by " <> show amt)
+
+        loopB1 issuer actors (n - 1) (st with seed = s3, history = entry :: st.history)

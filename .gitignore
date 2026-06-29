@@ -1,0 +1,10 @@
+# Daml build output
+.daml/
+*.dar
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

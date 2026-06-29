@@ -1,0 +1,62 @@
+module Mutants.B3AuthHole where
+
+-- ===========================================================================
+-- BUG ZOO -- mutant B3: "authorization hole" (the wrong party can act).
+--
+-- This is the Tier-2 bug class -- the highest-value one for institutions,
+-- because it is the Daml equivalent of a missing "only the owner can do this"
+-- check. The bug: the Transfer-style choice names the WRONG controller. It
+-- should be `controller owner`, but here it is `controller issuer`, so the
+-- issuer can reassign anyone's token without the owner's consent (an admin
+-- backdoor / theft).
+--
+-- How we catch it: the issuer seizes Alice's token and hands it to Eve. Alice
+-- never agreed. On a CORRECT contract (`controller owner`) the issuer's submit
+-- would be rejected; here it succeeds, so the hole is caught.
+--
+-- The correct contract's defence against this whole class is proven separately
+-- in Fuzz.daml -> fuzzAuthClean, where Eve (a true outsider) is confirmed
+-- blocked. B3 is the matching mutant that shows the Tier-2 check has teeth.
+-- ===========================================================================
+
+import Daml.Script
+
+initialSupply : Decimal
+initialSupply = 100.0
+
+template TokenB3
+  with
+    issuer : Party
+    owner  : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+    choice Seize : ContractId TokenB3
+      with newOwner : Party
+      controller issuer        -- BUG B3: should be `controller owner`
+      do create this with owner = newOwner
+
+fuzzB3 : Script ()
+fuzzB3 = do
+  issuer <- allocateParty "Issuer"
+  alice  <- allocateParty "Alice"
+  eve    <- allocateParty "Eve"
+
+  cid <- submit issuer do
+    createCmd TokenB3 with issuer, owner = alice, amount = initialSupply
+
+  -- The attack: the issuer reassigns Alice's token to Eve with no consent from
+  -- Alice. On a correct contract this would be rejected.
+  _ <- submit issuer do exerciseCmd cid Seize with newOwner = eve
+
+  toks <- query @TokenB3 issuer
+  let stolen = any (\(_, t) -> t.owner == eve) toks
+  if stolen
+    then debug ("BUG B3 CAUGHT (as expected): a non-owner reassigned ownership "
+                 <> "without the owner's consent.\nRecipe to reproduce:\n"
+                 <> "step 1: Issuer exercises Seize -> newOwner = Eve (Alice never consented)")
+    else assertMsg
+           "FUZZER MISSED bug B3 (authorization hole) -- this is a real failure"
+           False

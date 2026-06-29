@@ -1,0 +1,50 @@
+module Token where
+
+-- ---------------------------------------------------------------------------
+-- The CORRECT token contract -- our "known-good" baseline.
+--
+-- This is the contract the fuzzer runs against to prove it does NOT raise
+-- false alarms ("fuzz a correct contract for hundreds of rounds -> zero
+-- violations"). The deliberately-broken versions live in daml/Mutants/.
+--
+-- A Daml "template" is a blueprint for a contract. An actual on-ledger
+-- contract is an instance of a template with concrete field values.
+-- ---------------------------------------------------------------------------
+
+template Token
+  with
+    issuer : Party     -- who minted the token (and guarantees it)
+    owner  : Party     -- who currently holds it
+    amount : Decimal   -- how much it is worth
+  where
+    -- `signatory` = the party whose authority the contract exists under.
+    -- `observer`  = a party allowed to SEE the contract (but not necessarily act).
+    signatory issuer
+    observer owner
+
+    -- A "choice" is an action someone can take on the contract.
+    -- `controller owner` means: ONLY the current owner is allowed to do this.
+    -- This single line is the contract's authorization rule -- the thing the
+    -- Tier-2 ("Eve") part of the fuzzer attacks.
+
+    -- Move the whole token to a new owner.
+    choice Transfer : ContractId Token
+      with
+        newOwner : Party
+      controller owner
+      do create this with owner = newOwner
+
+    -- Split the token into two smaller tokens.
+    choice Split : (ContractId Token, ContractId Token)
+      with
+        splitAmount : Decimal
+      controller owner
+      do
+        -- `assertMsg` rejects the action if the condition is false. These two
+        -- guards are the contract's safety rules. The mutant B2 deletes the
+        -- first guard; the mutant B1 keeps the guards but botches the maths.
+        assertMsg "splitAmount must be positive"            (splitAmount > 0.0)
+        assertMsg "splitAmount must be smaller than amount" (splitAmount < amount)
+        first  <- create this with amount = splitAmount
+        second <- create this with amount = amount - splitAmount   -- correct: the rest
+        pure (first, second)
