@@ -1,0 +1,38 @@
+# CI for the public repo (copy to .github/workflows/ci.yml in E:\daml-fuzz).
+# Runs the full suite on Linux on every push/PR: continuously proves the
+# "fresh clone runs green" claim on the platform reviewers actually use,
+# and is the seed of the M3 per-PR fuzzing Action.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  daml-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache Daml SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.daml
+          key: daml-sdk-3.4.11
+
+      - name: Install Daml SDK
+        run: |
+          if [ ! -x "$HOME/.daml/bin/daml" ]; then
+            curl -sSL https://get.daml.com/ | sh -s 3.4.11
+          fi
+          echo "$HOME/.daml/bin" >> "$GITHUB_PATH"
+
+      - name: Run test suite
+        run: daml test

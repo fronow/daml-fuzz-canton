@@ -137,4 +137,5 @@ template first; B6–B7 need a propose/accept workflow (Tier 3); B8 needs a
 privacy property that queries the ledger *as Eve* and asserts she sees nothing
 she shouldn't (Tier 4). These belong to the grant milestones, not the PoC.
 
-Next: **guide 06** — turning this into a funded project.
+Next: the proposal draft (`../proposals/daml-fuzz.md`) — the roadmap for turning
+this proof of concept into a general-purpose tool.

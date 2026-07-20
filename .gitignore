@@ -2,6 +2,9 @@
 .daml/
 *.dar
 
+# Generated report (regenerate with scripts/report.ps1; report.sample.html is the committed example)
+report.html
+
 # OS / editor
 .DS_Store
 Thumbs.db

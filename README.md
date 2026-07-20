@@ -13,6 +13,8 @@ with a deterministic recipe to reproduce it.
 
 *The self-contained HTML report produced by every run (`scripts/report.ps1`).*
 
+▶ **[Watch the 2.5-minute demo](https://youtu.be/QZ2AnSY_Fps)** — a contract is broken live and the fuzzer catches it, with a deterministic reproduction recipe.
+
 ## Why
 
 Canton carries regulated, institutional value, and the expensive bugs in Daml

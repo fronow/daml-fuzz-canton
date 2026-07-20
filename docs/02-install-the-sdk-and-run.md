@@ -62,7 +62,7 @@ to download it and may fail behind a firewall.
 
 ## Step 3 — run the tests
 
-From the project root (`E:\canton-daml`):
+From the project root:
 
 ```powershell
 daml test
@@ -134,8 +134,8 @@ That means the fuzzer *missed* a planted bug. Also send the output.
 ## When it's green
 
 Congratulations — the PoC is real. Now you may:
-1. Record a short demo (see `STATUS.md`).
+1. Generate the scorecard and report (`./scripts/scorecard.ps1`, `./scripts/report.ps1`).
 2. Move on to the bug zoo (guide 05) to add more planted bugs.
-3. Start the grant process (guide 06).
+3. Read the proposal draft (`proposals/daml-fuzz.md`) for where this is headed.
 
 Next: **guide 03** — understand the contract the fuzzer attacks.

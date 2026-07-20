@@ -62,9 +62,11 @@ fuzzStateClean = do
       debug ("CLEAN: " <> show rounds
               <> " rounds completed on the correct contract with no violation (expected).")
     Some why ->
-      -- If we reach here the fuzzer flagged a correct contract -- a false
-      -- positive -- which is itself a failure we want `daml test` to show red.
-      assertMsg ("FALSE POSITIVE on a correct contract:\n" <> why) False
+      -- If we reach here, fuzzing found a state where an invariant is broken.
+      -- On the unmodified (correct) contract this must never happen, so `daml
+      -- test` shows it red -- either a real bug in the contract under test, or
+      -- (on correct code) a false positive in the fuzzer. Both are failures.
+      assertMsg ("INVARIANT VIOLATED on the token under test:\n" <> why) False
 
 -- The core loop. Each round it (1) checks the state invariants, then (2) fires
 -- ONE random but VALID action. It returns the first violation found, or None.
