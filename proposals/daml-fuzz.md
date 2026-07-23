@@ -1,9 +1,9 @@
 # Proposal: daml-fuzz — Property-Based Fuzzing for Daml Contracts
 
-> DRAFT. Bracketed values `[like this]` must be filled in with your champion
-> before opening the PR. Do not submit until `daml test` passes locally and a
-> champion in the Daml Language & Developer Tooling SIG (or the new Security
-> SIG) has expressed interest. Target SIG label: `daml-tooling`.
+- SIG alignment: daml-tooling
+- **License:** Apache-2.0
+- **Public repository (working PoC):** https://github.com/fronow/daml-fuzz-canton
+- **Total requested:** 800,000 CC across three milestones (open to committee guidance)
 
 ## Abstract
 
@@ -41,8 +41,12 @@ Four components around a local Canton ledger:
 
 A working proof of concept already exists (pure Daml Script): it fuzzes a token
 contract across hundreds of randomized rounds, checks conservation,
-non-negativity, and authorization (an adversary party "Eve"), and is validated
-by a **mutation-testing bug zoo** with a scorecard. See the public repo.
+non-negativity, authorization (an adversary party), and per-party privacy, and
+is validated by a **mutation-testing bug zoo**: 8 contracts, each with one
+planted defect, all 8 discovered by seeded random generation — not scripted
+exploits — with zero false positives on the correct contract. See the public
+repository for the runnable code, the scorecard script, and a self-contained
+sample report.
 
 ### Architectural alignment
 
@@ -63,21 +67,22 @@ during a fuzzing run.
 
 ## Milestones and deliverables
 
-**M1 — Core loop + property DSL + CLI** (~2 months)
+**M1 — Core loop + property DSL + CLI** (~2 months) — **250,000 CC**
 - Generic fuzzing engine over an introspected DAR; starter invariant pack;
   command-line interface.
-- *Metric:* mutation-testing score ≥ [9]/10 on the planted-bug zoo, median
-  time-to-catch < [50] rounds.
+- *Acceptance metric:* mutation-testing score ≥ 9/10 on the (expanded)
+  planted-bug zoo, median time-to-catch < 50 rounds, reproducible via the
+  published scorecard.
 
-**M2 — Stateful multi-party + shrinking** (~2 months)
+**M2 — Stateful multi-party + shrinking** (~2 months) — **300,000 CC**
 - Stateful multi-party sequence generation; automatic shrinking to minimal
   reproductions; deterministic replay reports.
-- *Metric:* run on ≥ 2 real codebases (incl. the CIP-0056 token standard
-  reference) with disclosed findings.
+- *Acceptance metric:* run on ≥ 2 real codebases (including the CIP-0056 token
+  standard reference implementation) with responsibly disclosed findings.
 
-**M3 — Coverage-guided + GitHub Action + docs** (~2 months)
+**M3 — Coverage-guided + GitHub Action + docs** (~2 months) — **250,000 CC**
 - Coverage-guided mutation; a GitHub Action for per-PR fuzzing; full docs.
-- *Metric:* ≥ 3 ecosystem teams running daml-fuzz in CI.
+- *Acceptance metric:* ≥ 3 ecosystem teams running daml-fuzz in CI.
 
 ## Acceptance criteria
 
@@ -87,23 +92,23 @@ during a fuzzing run.
 
 ## Funding request and milestone breakdown
 
-Total: **[TBD] CC**, milestone-based:
-- M1: [TBD] CC
-- M2: [TBD] CC
-- M3: [TBD] CC
+Total: **800,000 CC**, milestone-based, paid only on committee acceptance of
+each milestone:
+- M1: 250,000 CC
+- M2: 300,000 CC
+- M3: 250,000 CC
 
-(Benchmark against comparable merged daml-tooling grants; confirm exact figures
-with the champion before submission.)
+M2 carries the largest tranche because it holds the core engineering risk (the
+stateful generator and the shrinker) plus the real-codebase runs and disclosure
+work. M3's payout is deliberately tied to the adoption metric — the outcome the
+author controls least. The total reflects roughly six months of focused
+engineering at market cost; the author is open to committee guidance on the
+final figures.
 
 ## Volatility stipulation
 
 If the timeline exceeds 6 months, milestone amounts may be renegotiated per the
 fund's CC-volatility clause.
-
-## Co-marketing
-
-Happy to co-author a blog post / demo for the Canton developer channels on
-finding real bugs in ecosystem contracts.
 
 ## Motivation
 
@@ -112,9 +117,4 @@ are combinatorial — multi-party, multi-step interactions no example test
 enumerates. The ecosystem lacks adversarial-input tooling. daml-fuzz closes that
 gap and raises the security floor for the whole network.
 
-## Rationale
 
-Mutation testing gives an objective, repeatable measure of effectiveness, ideal
-for milestone verification. Building in pure Daml for the PoC and graduating to
-TypeScript bindings for the funded tool follows ecosystem norms (official JS
-bindings, npm distribution, GitHub Action) and maximizes adoption.
