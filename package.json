@@ -1,0 +1,37 @@
+{
+  "name": "daml-fuzz",
+  "version": "0.9.0",
+  "private": true,
+  "description": "Property-based fuzzing for Daml smart contracts on Canton: point it at a .dar, it fuzzes multi-party transactions against a real ledger and reports minimal reproductions of invariant violations.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "daml-fuzz": "./src/cli.ts"
+  },
+  "engines": {
+    "node": ">=23.6"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "daml",
+    "canton",
+    "fuzzing",
+    "property-based-testing",
+    "smart-contracts",
+    "testing"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "fuzz": "node src/cli.ts run",
+    "introspect": "node src/cli.ts introspect"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  }
+}

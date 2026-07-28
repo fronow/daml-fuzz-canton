@@ -1,0 +1,66 @@
+-- A tiny, self-contained token package used as the "try it in 2 minutes"
+-- example for daml-fuzz. It ships two templates in one package:
+--
+--   Token     — a correct fungible token. Splitting it conserves value.
+--   TokenBug  — identical, but Split forgets to subtract the split amount,
+--               so every split mints value out of nothing.
+--
+-- Point daml-fuzz at the built .dar and it should stay clean on Token and
+-- catch a conservation-of-value violation on TokenBug — with a minimal,
+-- shrunk reproduction.
+
+module SampleToken where
+
+-- The correct token.
+template Token
+  with
+    issuer : Party
+    owner : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+    ensure amount > 0.0
+
+    -- Move the whole token to a new owner.
+    choice Transfer : ContractId Token
+      with newOwner : Party
+      controller owner
+      do create this with owner = newOwner
+
+    -- Split into two tokens whose amounts sum to the original.
+    choice Split : (ContractId Token, ContractId Token)
+      with splitAmount : Decimal
+      controller owner
+      do
+        assertMsg "splitAmount must be positive" (splitAmount > 0.0)
+        assertMsg "splitAmount must be smaller than amount" (splitAmount < amount)
+        a <- create this with amount = splitAmount
+        b <- create this with amount = amount - splitAmount  -- correct: the rest
+        pure (a, b)
+
+-- The same token with one planted bug in Split.
+template TokenBug
+  with
+    issuer : Party
+    owner : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+    ensure amount > 0.0
+
+    choice TransferBug : ContractId TokenBug
+      with newOwner : Party
+      controller owner
+      do create this with owner = newOwner
+
+    choice SplitBug : (ContractId TokenBug, ContractId TokenBug)
+      with splitAmount : Decimal
+      controller owner
+      do
+        assertMsg "splitAmount must be positive" (splitAmount > 0.0)
+        assertMsg "splitAmount must be smaller than amount" (splitAmount < amount)
+        a <- create this with amount = splitAmount
+        b <- create this with amount = amount  -- BUG: should be `amount - splitAmount`
+        pure (a, b)

@@ -1,13 +1,17 @@
-# Daml build output
-.daml/
-*.dar
-
-# Generated report (regenerate with scripts/report.ps1; report.sample.html is the committed example)
+# --- build output, deps, run artifacts (never published) ---
+node_modules/
+**/.daml/
+log/
 report.html
+report.json
+*-report.json
+actionspace-*.json
 
-# OS / editor
-.DS_Store
-Thumbs.db
-*.swp
-.idea/
-.vscode/
+# --- private working docs — intentionally NOT published ---
+# (strategy, internal notes, recording scripts, design/status memos)
+NOTES-internal.md
+DEMO.md
+ROADMAP-to-1.0.md
+V2-BACKLOG.md
+LF-DECODER.md
+evidence-grpc-run.md

@@ -1,111 +1,162 @@
 # daml-fuzz
 
-Property-based fuzzing for Daml smart contracts on the Canton Network.
+**Property-based fuzzing for Daml smart contracts on Canton.**
 
-You declare the invariants your contract must never break. daml-fuzz generates
-large numbers of randomized, multi-party transaction sequences, checks the
-invariants after every step, and reports any sequence that violates one together
-with a deterministic recipe to reproduce it.
+Point daml-fuzz at a compiled Daml package (`.dar`). It discovers the templates,
+choices and argument types automatically, fires randomized multi-party
+transaction sequences at a real Canton ledger, and reports any sequence that
+violates a declared invariant — together with a **minimal, deterministic recipe
+to reproduce it** and a self-contained HTML report.
 
-**License:** Apache-2.0 · **Daml:** 3.x · **Status:** proof of concept
+No manual configuration is required to get started: the core value properties
+are checked out of the box on any token-like contract.
 
-![daml-fuzz assurance report: PASS — 11 scenarios, 8/8 planted bugs caught, 0 false positives](docs/report-screenshot.png)
+- Runs on **Node ≥ 23.6** (TypeScript executed directly — no build step) with
+  **zero runtime dependencies**.
+- Talks to Canton over the **JSON Ledger API v2**.
+- Apache-2.0.
 
-*The self-contained HTML report produced by every run (`scripts/report.ps1`).*
-
-▶ **[Watch the 2.5-minute demo](https://youtu.be/QZ2AnSY_Fps)** — a contract is broken live and the fuzzer catches it, with a deterministic reproduction recipe.
+---
 
 ## Why
 
-Canton carries regulated, institutional value, and the expensive bugs in Daml
-are rarely in a single choice. They emerge from combinations of parties, steps,
-and orderings that no hand-written test enumerates. The ecosystem already has
-coverage analysis and static checking, but nothing that *generates adversarial
-inputs*. daml-fuzz targets the failure modes specific to Canton:
+The expensive bugs in Daml are rarely in a single choice — they emerge from
+combinations of parties, steps and orderings that no hand-written test
+enumerates. daml-fuzz generates those adversarial sequences and checks, after
+every step, the properties that must always hold:
 
 - **Conservation of value** — value is never created from nothing or lost.
-- **Authorization** — a party can never take an action it is not entitled to.
-- **Privacy / disclosure** — a party can never observe data it is not a
-  stakeholder of. (This class cannot be expressed on transparent ledgers.)
+- **Non-negativity** — no holding ever goes negative.
+- **Authorization** (`--auth-fuzz`) — each step is submitted as a random subset
+  of parties, surfacing actions a party subset should not be able to perform.
+- **Privacy / disclosure** (`--privacy`) — an uninvolved party must be able to
+  observe nothing; any contract it can see is an over-disclosure. (This class of
+  property is specific to a privacy-preserving ledger like Canton.)
 
-## Features
+On a violation, the failing sequence is automatically **shrunk** to the smallest
+sequence that still reproduces it.
 
-- Four property classes out of the box: value (conservation & non-negativity),
-  authorization, multi-step workflow, and privacy.
-- Mutation-tested. A "bug zoo" of contracts with known planted defects measures
-  detection. The current proof of concept catches **8 of 8** planted bugs with
-  **0 false positives** on the correct contract.
-- Deterministic. A fixed seed reproduces a run exactly. No network, no external
-  services, no per-run cost.
-- A self-contained HTML report suitable for archiving as an assurance artifact.
+## Requirements
 
-## Quick start
+- **Daml SDK 3.x** on `PATH` (`daml`, `damlc`).
+- **An OpenJDK** (e.g. Temurin 21) for a local sandbox. Note: **Oracle JDK does
+  not work** with Canton (`JCE cannot authenticate the provider BC`); pass
+  `--java-home` pointing at an OpenJDK if your default `java` is Oracle's.
+- **Node.js ≥ 23.6**.
 
-Install the Daml SDK (3.x) — see [docs/02](docs/02-install-the-sdk-and-run.md).
-Then, from the project root:
+## Quickstart
 
-```bash
-daml test
-```
-
-All scenarios are written so that a green run means the fuzzer behaved correctly:
-no false alarms on the correct contract, and every planted bug caught.
-
-Headline metrics:
-
-```bash
-./scripts/scorecard.ps1
-```
+Build the bundled sample (a correct token plus a value-inflating buggy variant):
 
 ```
-MUTATION SCORE : 8 / 8 planted bugs caught (100%)
-FALSE POSITIVES: 0
-CHOICE COVERAGE: 10 / 23 choices exercised (43.5%)
-RESULT: PASS
+cd examples/sample-token && daml build && cd ../..
 ```
 
-A self-contained report:
+Fuzz it — one cold-start command that boots a sandbox, uploads the DAR, fuzzes,
+shrinks any failure, writes a report and shuts the sandbox down:
 
-```bash
-./scripts/report.ps1   # writes report.html
 ```
+node src/cli.ts run examples/sample-token/.daml/dist/daml-fuzz-sample-0.1.0.dar \
+  --seed 42 --sandbox --report report.json
+```
+
+Turn the JSON report into a self-contained HTML page (no ledger or SDK needed):
+
+```
+node src/cli.ts report report.json --out report.html
+```
+
+### What a catch looks like
+
+```
+— round 3/8: seed 15880, 25 steps
+[15] accepted create   SampleToken:TokenBug
+[18] accepted exercise SampleToken:TokenBug SplitBug — VIOLATION conservation-of-value:
+       expected the holdings to total 13.37 but they total 25.403
+FOUND at round 3, step 18: 'conservation-of-value'
+shrinking 25 steps (greedy delta-debug to fixpoint)…
+shrink: 25 → 2 step(s) in 27 replays
+RESULT: 'conservation-of-value' violated — minimal reproduction is 2 step(s)
+coverage: 6/6 action(s) accepted at least once
+```
+
+On a correct contract the run stays clean — no false positives.
 
 ## How it works
 
-1. You declare invariants (the rules) separately from any single contract.
-2. A seeded generator produces randomized multi-party transaction sequences.
-3. After each step the invariants are evaluated against ledger state.
-4. On a violation the run stops and reports the property that broke, the choice
-   involved, and the exact sequence of steps to reproduce it.
+Five stages, all driven by the one compiled `.dar`:
 
-Because the generator is seeded, every finding is fully reproducible.
+1. **Introspect** — read the DAR, enumerate every template, its Party-typed
+   fields (candidate actors), its choices and their argument records/types.
+   Multi-package DARs and interface choices are handled.
+2. **Generate** — build randomized, valid-shaped, multi-party transaction
+   sequences from a deterministic seed. Plans are symbolic (index-based party
+   and contract references), so a seed reproduces the same plan anywhere.
+3. **Execute** — replay the plan against a live participant over the JSON Ledger
+   API, submitting as multiple parties and recording each step's outcome.
+4. **Check** — after every accepted step, evaluate the invariants (conservation,
+   non-negativity, and optionally privacy) against a uniform holdings snapshot
+   whose quantity/holder fields are derived from introspection.
+5. **Shrink** — on a violation, greedily reduce the sequence to a minimal
+   reproduction, verify it and emit the replay report.
 
-## Roadmap
-
-- Read a compiled package and fuzz it with no manual setup.
-- Guided generation that reaches deep, rare contract states.
-- Automatic shrinking of a failing sequence to its minimal form.
-- A GitHub Action that fuzzes every pull request.
-- Deeper privacy/disclosure analysis.
-
-## Project layout
+## Commands
 
 ```
-daml/        contracts and the fuzzer (Token, Fuzz, Properties, Prng, Mutants/)
-docs/        guides, from a gentle introduction to the design
-scripts/     scorecard.ps1 and report.ps1
-proposals/   the daml-fuzz development-fund proposal
+daml-fuzz introspect <dar> [--out space.json]
+    Discover the action space of a DAR (templates, choices, types).
+
+daml-fuzz gen <space.json> --seed <n> [--steps n] [--actors n]
+              [--create-percent n] [--auth-fuzz] [--out plan.json]
+    Generate a deterministic, symbolic transaction plan.
+
+daml-fuzz exec <plan.json> --space <space.json> [--api <url>]
+              [--privacy] [--report r.json]
+    Replay a plan against a running participant.
+
+daml-fuzz run <dar> --seed <n> [--steps n] [--actors n] [--rounds n]
+              [--create-percent n] [--auth-fuzz] [--privacy] [--sandbox]
+              [--java-home <dir>] [--api <url>] [--report r.json]
+    The whole pipeline: introspect → generate → execute → check → shrink →
+    report. With --sandbox it manages a local Canton sandbox for you. Exits
+    non-zero on a finding, so it can gate a CI job.
+
+daml-fuzz report <report.json> [--out report.html]
+    Render a JSON replay report as a self-contained HTML page.
 ```
 
-## Documentation
+Run `node src/cli.ts` with no arguments for the full usage summary.
 
-- [Introduction to Canton and Daml](docs/01-what-is-canton-and-daml.md)
-- [Install and run](docs/02-install-the-sdk-and-run.md)
-- [The token contract](docs/03-understanding-the-token-contract.md)
-- [The fuzzer](docs/04-understanding-the-fuzzer.md)
-- [The bug zoo and scorecard](docs/05-the-bug-zoo-and-scorecard.md)
-- [Glossary](docs/07-glossary.md)
+## Continuous integration
+
+- `.github/workflows/ci.yml` — type-check + the hermetic test suite on push/PR.
+- `.github/workflows/fuzz.yml` — a per-PR fuzzing gate: builds a DAR, fuzzes it,
+  uploads the HTML report as an artifact, and **fails the job on a violation**.
+
+## Scope and limitations
+
+- Out-of-the-box properties are conservation-of-value, non-negativity,
+  authorization and privacy. User-defined custom invariants are planned.
+- Best suited to **token / holding-style contracts** (a numeric quantity held by
+  a party); it runs on any DAR, but the built-in value properties apply where a
+  holding can be identified.
+- Introspection currently reads `damlc inspect` output. A native, dependency-free
+  `daml_lf` protobuf decoder is included (`src/protobuf.ts`, `src/lfdecode.ts`)
+  and covers the package structure and type system; wiring it in as the default
+  introspection path is in progress.
+- Variant/enum choice-argument fields are not yet generated.
+
+## Development
+
+```
+npm install         # dev-only deps (@types/node, typescript) for the editor
+npm test            # hermetic test suite (no ledger needed)
+npm run typecheck   # tsc --noEmit
+```
+
+Contributions welcome — see `CONTRIBUTING.md`. This is plain, dependency-free
+TypeScript; please keep it that way.
 
 ## License
 
-Apache-2.0.
+Apache-2.0. See `LICENSE`.

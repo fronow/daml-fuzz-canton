@@ -1,0 +1,60 @@
+name: fuzz
+
+# Per-PR fuzzing gate. This runs daml-fuzz against a Daml package on every pull
+# request and FAILS the job if it finds an invariant violation, attaching the
+# HTML report as an artifact. It fuzzes the bundled sample package by default;
+# point DAR_PROJECT / seeds at your own package to gate your repo.
+#
+# Requires a Daml SDK and an OpenJDK (Oracle JDK does not work with Canton), so
+# this job is heavier than `ci.yml` — keep it as a separate workflow.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DAR_PROJECT: examples/sample-token
+  DAML_SDK_VERSION: 3.4.11
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # OpenJDK (Temurin) — Canton rejects Oracle JDK.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install the Daml SDK
+        run: |
+          curl -sSL https://get.daml.com/ | sh -s ${{ env.DAML_SDK_VERSION }}
+          echo "$HOME/.daml/bin" >> "$GITHUB_PATH"
+
+      - name: Build the DAR
+        working-directory: ${{ env.DAR_PROJECT }}
+        run: daml build
+
+      - name: Fuzz (fails the job on a violation)
+        run: |
+          DAR=$(ls ${{ env.DAR_PROJECT }}/.daml/dist/*.dar | head -1)
+          node src/cli.ts run "$DAR" \
+            --seed 42 --steps 30 --rounds 10 --actors 2 \
+            --sandbox --report fuzz-report.json
+          node src/cli.ts report fuzz-report.json --out fuzz-report.html
+
+      - name: Upload fuzz report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daml-fuzz-report
+          path: |
+            fuzz-report.json
+            fuzz-report.html
+          if-no-files-found: ignore
