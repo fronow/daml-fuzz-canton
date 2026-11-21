@@ -24,6 +24,7 @@ import {
   type TypeDesc,
 } from "./lfparse.ts";
 import { readZip } from "./zip.ts";
+import { winCommandLine } from "./winshell.ts";
 
 export interface ActionSpaceField {
   name: string;
@@ -83,10 +84,9 @@ export function runDamlcInspect(path: string, damlCmd = "daml"): string {
   const options = { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 } as const;
   // The assistant is a .cmd shim on Windows, which Node refuses to spawn
   // without a shell; pass a single pre-quoted command string there.
-  const quote = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
   const res =
     process.platform === "win32"
-      ? spawnSync(`${quote(damlCmd)} damlc inspect ${quote(path)}`, {
+      ? spawnSync(winCommandLine(damlCmd, ["damlc", "inspect", path]), {
           ...options,
           shell: true,
         })

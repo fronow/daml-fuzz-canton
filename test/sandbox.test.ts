@@ -11,7 +11,8 @@ const PORT_DIR = join("tmp", "ports");
 
 test("recipe: ports, port files, and DAR are all present", () => {
   const r = sandboxCommand({ dar: "a.dar", ledgerPort: 7011, jsonPort: 7575 }, PORT_DIR);
-  const flat = r.args ? [r.command, ...r.args].join(" ") : r.command;
+  // On win32 every argument is quoted; compare without the quote marks.
+  const flat = (r.args ? [r.command, ...r.args].join(" ") : r.command).replace(/"/g, "");
   for (const part of [
     "sandbox",
     "--dar a.dar",
@@ -26,7 +27,8 @@ test("recipe: ports, port files, and DAR are all present", () => {
 
 test("recipe: defaults are 6865 / 7575", () => {
   const r = sandboxCommand({ dar: "a.dar" }, PORT_DIR);
-  const flat = r.args ? [r.command, ...r.args].join(" ") : r.command;
+  // On win32 every argument is quoted; compare without the quote marks.
+  const flat = (r.args ? [r.command, ...r.args].join(" ") : r.command).replace(/"/g, "");
   assert.ok(flat.includes("--port 6865"));
   assert.ok(flat.includes("--json-api-port 7575"));
 });

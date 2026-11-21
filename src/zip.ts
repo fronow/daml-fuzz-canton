@@ -16,6 +16,10 @@ const EOCD_SIG = 0x06054b50;
 const CDFH_SIG = 0x02014b50;
 const LFH_SIG = 0x04034b50;
 
+/** Largest entry we will unpack. Real .dalf files are a few MiB; the cap stops
+ * a crafted .dar (a "zip bomb") from expanding into gigabytes of memory. */
+export const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
+
 export function readZip(buf: Buffer): ZipEntry[] {
   // EOCD is at the end, possibly preceded by a comment (≤ 64 KiB).
   let eocd = -1;
@@ -37,6 +41,7 @@ export function readZip(buf: Buffer): ZipEntry[] {
       throw new Error(`bad central directory entry at ${off}`);
     const method = buf.readUInt16LE(off + 10);
     const compressedSize = buf.readUInt32LE(off + 20);
+    const uncompressedSize = buf.readUInt32LE(off + 24);
     const nameLen = buf.readUInt16LE(off + 28);
     const extraLen = buf.readUInt16LE(off + 30);
     const commentLen = buf.readUInt16LE(off + 32);
@@ -52,9 +57,22 @@ export function readZip(buf: Buffer): ZipEntry[] {
         const lNameLen = buf.readUInt16LE(localOff + 26);
         const lExtraLen = buf.readUInt16LE(localOff + 28);
         const dataStart = localOff + 30 + lNameLen + lExtraLen;
+        if (dataStart + compressedSize > buf.length)
+          throw new Error(`${name}: entry runs past the end of the file`);
+        if (uncompressedSize > MAX_ENTRY_BYTES || compressedSize > MAX_ENTRY_BYTES)
+          throw new Error(`${name}: entry larger than ${MAX_ENTRY_BYTES} bytes, refusing to unpack`);
         const raw = buf.subarray(dataStart, dataStart + compressedSize);
         if (method === 0) return Buffer.from(raw);
-        if (method === 8) return inflateRawSync(raw);
+        if (method === 8) {
+          // The header size can lie, so cap the inflater itself too.
+          try {
+            return inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES });
+          } catch (e) {
+            if ((e as { code?: string }).code === "ERR_BUFFER_TOO_LARGE")
+              throw new Error(`${name}: unpacks to more than ${MAX_ENTRY_BYTES} bytes, refusing (zip bomb?)`);
+            throw e;
+          }
+        }
         throw new Error(`${name}: unsupported compression method ${method}`);
       },
     });

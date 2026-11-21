@@ -18,6 +18,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { winCommandLine } from "./winshell.ts";
 
 export interface SandboxOptions {
   dar: string;
@@ -64,8 +65,7 @@ export function sandboxCommand(opts: SandboxOptions, portDir: string): {
     env[pathKey] = join(opts.javaHome, "bin") + delimiter + (env[pathKey] ?? "");
   }
   if (process.platform === "win32") {
-    const quote = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
-    return { command: [damlCmd, ...args].map(quote).join(" "), args: null, env };
+    return { command: winCommandLine(damlCmd, args), args: null, env };
   }
   return { command: damlCmd, args, env };
 }

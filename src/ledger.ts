@@ -137,26 +137,38 @@ export class LedgerClient implements LedgerApi {
           createdEvent?: {
             contractId: string;
             templateId: string;
+            offset?: number;
+            nodeId?: number;
             createArgument?: Record<string, unknown>;
             interfaceViews?: Array<{ viewValue?: Record<string, unknown> }>;
           };
         };
       };
     }>;
-    const out: ActiveContract[] = [];
+    const rows: Array<{ c: ActiveContract; offset: number; nodeId: number }> = [];
     for (const entry of r) {
       const ev = entry.contractEntry?.JsActiveContract?.createdEvent;
       if (ev)
-        out.push({
-          contractId: ev.contractId,
-          templateId: ev.templateId,
-          // Interface-filtered events may omit the create argument; the
-          // interface view is the fallback.
-          payload: ev.createArgument ?? ev.interfaceViews?.[0]?.viewValue ?? {},
+        rows.push({
+          c: {
+            contractId: ev.contractId,
+            templateId: ev.templateId,
+            // Interface-filtered events may omit the create argument; the
+            // interface view is the fallback.
+            payload: ev.createArgument ?? ev.interfaceViews?.[0]?.viewValue ?? {},
+          },
+          offset: ev.offset ?? Number.MAX_SAFE_INTEGER,
+          nodeId: ev.nodeId ?? 0,
         });
     }
-    out.sort((a, b) => (a.contractId < b.contractId ? -1 : 1));
-    return out;
+    // Creation order (offset, then node within the transaction). Contract ids
+    // are hashes that differ on every replay, so sorting by id would make
+    // { contractRef } pick a different contract each time and break replay
+    // and shrinking. Contract id only breaks ties when the ledger omits offsets.
+    rows.sort((a, b) =>
+      a.offset - b.offset || a.nodeId - b.nodeId || (a.c.contractId < b.c.contractId ? -1 : 1),
+    );
+    return rows.map((x) => x.c);
   }
 
   async submitAndWait(req: {
